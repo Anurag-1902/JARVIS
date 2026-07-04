@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SENTRY</title>
+<style>
+  :root{
+    --bg:#06080a; --panel:#0b0f13; --line:#1b242b; --ink:#c8d4d8; --dim:#5a6a72;
+    --core:#9d7bff; --hot:#c9b0ff; --ok:#6ee7a0; --warn:#ffb454; --err:#ff6b5e;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);height:100vh;overflow:hidden;
+       font:13px/1.55 'SF Mono',ui-monospace,Menlo,Consolas,monospace}
+  #app{display:grid;grid-template-columns:1fr 320px;grid-template-rows:auto 1fr auto;height:100vh}
+
+  header{grid-column:1/3;display:flex;justify-content:space-between;align-items:center;
+         padding:11px 18px;border-bottom:1px solid var(--line);font-size:11px;
+         letter-spacing:.18em;color:var(--dim)}
+  header b{color:var(--ink);font-weight:600}
+  header b::before{content:"◈ ";color:var(--core)}
+  #pill{text-transform:uppercase;padding:3px 10px;border:1px solid var(--line);border-radius:2px;transition:.3s}
+  #pill.thinking{color:var(--ok);border-color:var(--ok)}
+  #pill.listening{color:var(--hot);border-color:var(--core)}
+
+  /* chat column */
+  #main{display:flex;flex-direction:column;min-width:0}
+  #log{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:14px;
+       scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+  .msg{max-width:76ch;white-space:pre-wrap;animation:fade .25s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1}}
+  .msg .tag{font-size:10px;letter-spacing:.15em;display:block;margin-bottom:3px}
+  .msg.you{align-self:flex-end;text-align:right}
+  .msg.you .tag{color:var(--dim)}
+  .msg.ai .tag{color:var(--core)}
+  .msg.sys{color:var(--dim);font-size:11.5px}
+  .msg.sys .tag{color:var(--warn)}
+  .msg.err{color:var(--err)}
+  .chip{display:inline-block;border:1px solid var(--line);border-radius:2px;color:var(--dim);
+        font-size:11px;padding:2px 8px;margin:2px 0}
+  .plan-block{border-left:2px solid var(--core);padding-left:12px}
+
+  /* composer */
+  #composer{display:flex;gap:10px;padding:14px 18px;border-top:1px solid var(--line);align-items:center}
+  #mic{width:46px;height:46px;border-radius:50%;flex-shrink:0;border:1px solid var(--core);
+       background:transparent;color:var(--hot);cursor:pointer;font-size:17px}
+  #mic:hover{background:rgba(157,123,255,.12)}
+  #mic.on{background:rgba(157,123,255,.2);animation:pulse 1.5s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(157,123,255,.45)}100%{box-shadow:0 0 0 18px rgba(157,123,255,0)}}
+  #inp{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--ink);
+       font:inherit;padding:12px 14px;border-radius:3px;outline:none}
+  #inp:focus{border-color:var(--core)}
+  #send{border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit;
+        padding:12px 18px;border-radius:3px;cursor:pointer;letter-spacing:.1em}
+  #send:hover{border-color:var(--core);color:var(--hot)}
+  #speakToggle{border:1px solid var(--line);background:transparent;color:var(--dim);font:inherit;
+        font-size:11px;padding:12px 10px;border-radius:3px;cursor:pointer}
+  #speakToggle.on{color:var(--hot);border-color:var(--core)}
+
+  /* sidebar */
+  aside{border-left:1px solid var(--line);padding:16px;overflow-y:auto;background:var(--panel);
+        display:flex;flex-direction:column;gap:18px}
+  aside h3{font-size:10px;letter-spacing:.2em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
+  #goal{color:var(--hot);margin-bottom:8px}
+  .step{display:flex;gap:8px;padding:5px 0;color:var(--dim);font-size:12px;border-bottom:1px solid #10161b}
+  .step .m{width:14px;flex-shrink:0}
+  .step.cur{color:var(--ink)}
+  .step.cur .m{color:var(--core)}
+  .step.done{opacity:.45}
+  .step.done .m{color:var(--ok)}
+  #proj,#mem{color:var(--dim);font-size:11.5px;line-height:1.6}
+  progress{width:100%;height:4px;appearance:none;margin-top:6px}
+  progress::-webkit-progress-bar{background:var(--line)}
+  progress::-webkit-progress-value{background:var(--core)}
+
+  /* confirm modal */
+  #shade{position:fixed;inset:0;background:rgba(3,5,7,.75);display:none;
+         align-items:center;justify-content:center;z-index:10}
+  #shade.show{display:flex}
+  #modal{background:var(--panel);border:1px solid var(--warn);border-radius:4px;
+         max-width:560px;width:92%;padding:20px}
+  #modal h4{color:var(--warn);font-size:11px;letter-spacing:.2em;margin-bottom:12px}
+  #modal pre{white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);
+             padding:12px;border-radius:3px;margin-bottom:16px;max-height:200px;overflow:auto}
+  #modal .row{display:flex;gap:10px;justify-content:flex-end}
+  #modal button{font:inherit;padding:9px 20px;border-radius:3px;cursor:pointer;letter-spacing:.08em}
+  #approve{border:1px solid var(--ok);background:rgba(110,231,160,.1);color:var(--ok)}
+  #deny{border:1px solid var(--line);background:transparent;color:var(--dim)}
+
+  @media (max-width:820px){
+    #app{grid-template-columns:1fr}
+    aside{display:none}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <b>SENTRY / WEB</b>
+    <span id="pill">standby</span>
+    <span id="brain">—</span>
+  </header>
+
+  <div id="main">
+    <div id="log">
+      <div class="msg sys"><span class="tag">SYS</span>Web console online. Type a command, or use the mic (Chrome/Edge). Try: task: set up docker for my project</div>
+    </div>
+    <div id="composer">
+      <button id="mic" title="voice input">◉</button>
+      <input id="inp" placeholder="type a command…  (task: <goal> · next · plan · index)" autocomplete="off">
+      <button id="send">RUN</button>
+      <button id="speakToggle" class="on" title="speak replies aloud">🔊 voice</button>
+    </div>
+  </div>
+
+  <aside>
+    <div>
+      <h3>Workspace</h3>
+      <select id="wsSel" style="width:100%;background:var(--bg);color:var(--ink);
+        border:1px solid var(--line);padding:8px;font:inherit;border-radius:3px"></select>
+    </div>
+    <div>
+      <h3>Active Task</h3>
+      <div id="goal">none</div>
+      <progress id="prog" value="0" max="1"></progress>
+      <div id="steps"></div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button id="undoBtn" style="flex:1;font:inherit;font-size:10px;letter-spacing:.1em;
+          padding:6px;border:1px solid var(--warn);background:transparent;color:var(--warn);
+          border-radius:2px;cursor:pointer">⟲ UNDO LAST STEP</button>
+        <button id="tplBtn" style="flex:1;font:inherit;font-size:10px;letter-spacing:.1em;
+          padding:6px;border:1px solid var(--line);background:transparent;color:var(--dim);
+          border-radius:2px;cursor:pointer">💾 SAVE AS TEMPLATE</button>
+      </div>
+    </div>
+    <div><h3>Project</h3><div id="proj">—</div></div>
+    <div><h3>Memory</h3><div id="mem">—</div></div>
+    <div>
+      <h3>History</h3>
+      <input id="histQ" placeholder="search past chats…" style="width:100%;background:var(--bg);
+        color:var(--ink);border:1px solid var(--line);padding:8px;font:inherit;border-radius:3px">
+      <div id="histRes" style="margin-top:8px;display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+  </aside>
+</div>
+
+<div id="shade">
+  <div id="modal">
+    <h4>⚠ PERMISSION REQUIRED</h4>
+    <pre id="confirmMsg"></pre>
+    <div class="row">
+      <button id="deny">Deny</button>
+      <button id="approve">Approve &amp; Run</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const log = document.getElementById('log');
+const inp = document.getElementById('inp');
+const pill = document.getElementById('pill');
+const speakBtn = document.getElementById('speakToggle');
+let speakOn = true;
+let busy = false;
+
+function el(cls, tag, text){
+  const d = document.createElement('div');
+  d.className = 'msg ' + cls;
+  const t = document.createElement('span');
+  t.className = 'tag'; t.textContent = tag;
+  d.appendChild(t);
+  d.appendChild(document.createTextNode(text || ''));
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+  return d;
+}
+function setPill(s){ pill.textContent = s; pill.className = s === 'standby' ? '' : s; }
+
+/* ---------- state / plan sidebar ---------- */
+async function refreshState(){
+  try{
+    const s = await (await fetch('/api/state')).json();
+    document.getElementById('brain').textContent = s.brain;
+    document.getElementById('proj').textContent = s.project;
+    document.getElementById('mem').textContent = s.memory;
+    renderPlan(s.plan);
+    renderWorkspaces(s.workspaces);
+  }catch(_){}
+}
+
+/* ---------- workspaces ---------- */
+const wsSel = document.getElementById('wsSel');
+function renderWorkspaces(ws){
+  if(!ws) return;
+  wsSel.innerHTML = '';
+  for(const name of Object.keys(ws.projects)){
+    const o = document.createElement('option');
+    o.value = name; o.textContent = name + '  —  ' + ws.projects[name];
+    if(name === ws.current) o.selected = true;
+    wsSel.appendChild(o);
+  }
+  const add = document.createElement('option');
+  add.value = '__new__'; add.textContent = '+ new workspace…';
+  wsSel.appendChild(add);
+}
+wsSel.onchange = async ()=>{
+  let name = wsSel.value, workdir = null;
+  if(name === '__new__'){
+    name = prompt('Workspace name (e.g. levee):');
+    if(!name){ refreshState(); return; }
+    workdir = prompt('Project folder path (e.g. /Users/anurag/dev/levee):');
+    if(!workdir){ refreshState(); return; }
+  }
+  const r = await (await fetch('/api/workspace', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, workdir})})).json();
+  el('sys','SYS', r.message || r.error);
+  refreshState();
+};
+
+/* ---------- undo + templates ---------- */
+document.getElementById('undoBtn').onclick = async ()=>{
+  const r = await (await fetch('/api/undo', {method:'POST'})).json();
+  el('sys','SYS', r.message);
+  renderPlan(r.plan);
+};
+document.getElementById('tplBtn').onclick = ()=>{
+  const name = prompt('Template name (e.g. levee-deploy):');
+  if(name) send('save plan as ' + name.trim());
+};
+
+/* ---------- history search ---------- */
+const histQ = document.getElementById('histQ');
+histQ.addEventListener('keydown', async e=>{
+  if(e.key !== 'Enter') return;
+  const q = histQ.value.trim();
+  const box = document.getElementById('histRes');
+  box.innerHTML = '';
+  if(!q) return;
+  const r = await (await fetch('/api/history?q=' + encodeURIComponent(q))).json();
+  if(!r.results.length){ box.textContent = 'no matches'; return; }
+  for(const row of r.results.slice(0, 10)){
+    const d = document.createElement('div');
+    d.style.cssText = 'border:1px solid var(--line);border-radius:3px;padding:8px;font-size:11px;color:var(--dim)';
+    d.innerHTML = `<div style="color:var(--core)">${row.ts} · ${row.project} · ${row.kind}</div>
+      <div style="color:var(--ink);margin:3px 0">YOU: ${row.you.slice(0,90).replace(/</g,'&lt;')}</div>
+      <div>SENTRY: ${row.sentry.slice(0,140).replace(/</g,'&lt;')}</div>`;
+    box.appendChild(d);
+  }
+});
+function renderPlan(p){
+  const goal = document.getElementById('goal');
+  const steps = document.getElementById('steps');
+  const prog = document.getElementById('prog');
+  steps.innerHTML = '';
+  if(!p || !p.active){ goal.textContent = 'none'; prog.value = 0; return; }
+  goal.textContent = p.goal;
+  const done = p.steps.filter(s=>s.done).length;
+  prog.max = p.steps.length; prog.value = done;
+  p.steps.forEach((s,i)=>{
+    const d = document.createElement('div');
+    d.className = 'step' + (s.done ? ' done' : i === p.current ? ' cur' : '');
+    d.innerHTML = `<span class="m">${s.done ? '✔' : i === p.current ? '▶' : '·'}</span><span style="flex:1">${i+1}. ${s.title}</span>`;
+    d.title = s.detail;
+    if(i === p.current && !s.done){
+      const b = document.createElement('button');
+      b.textContent = 'EXECUTE';
+      b.title = 'Run this step\'s command (asks for approval first)';
+      b.style.cssText = 'font:inherit;font-size:9px;letter-spacing:.1em;padding:3px 8px;'+
+        'border:1px solid var(--core);background:rgba(157,123,255,.1);color:var(--hot);'+
+        'border-radius:2px;cursor:pointer;margin-left:6px';
+      b.onclick = (e)=>{ e.stopPropagation(); send('do it'); };
+      d.appendChild(b);
+    }
+    steps.appendChild(d);
+  });
+}
+
+/* ---------- speech out ---------- */
+speakBtn.onclick = ()=>{ speakOn = !speakOn; speakBtn.classList.toggle('on', speakOn); if(!speakOn) speechSynthesis.cancel(); };
+function speak(text){
+  if(!speakOn || !('speechSynthesis' in window)) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text.slice(0, 600));
+  const vs = speechSynthesis.getVoices();
+  u.voice = vs.find(v=>/en[-_]GB/i.test(v.lang) && /daniel|male/i.test(v.name))
+         || vs.find(v=>/en[-_]GB/i.test(v.lang)) || vs.find(v=>v.lang.startsWith('en'));
+  u.pitch = 0.9; u.rate = 1.02;
+  speechSynthesis.speak(u);
+}
+
+/* ---------- confirm modal ---------- */
+const shade = document.getElementById('shade');
+document.getElementById('approve').onclick = ()=>answer(true);
+document.getElementById('deny').onclick = ()=>answer(false);
+function askConfirm(msg){
+  document.getElementById('confirmMsg').textContent = msg;
+  shade.classList.add('show');
+}
+async function answer(ok){
+  shade.classList.remove('show');
+  await fetch('/api/confirm', {method:'POST', headers:{'Content-Type':'application/json'},
+                               body: JSON.stringify({approve: ok})});
+}
+
+/* ---------- chat with SSE streaming ---------- */
+async function send(text){
+  if(!text || busy) return;
+  busy = true;
+  el('you','YOU',text);
+  inp.value = '';
+  setPill('thinking');
+  let aiDiv = null, streamed = '';
+
+  try{
+    const res = await fetch('/api/chat', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({text})});
+    if(!res.ok){ const e = await res.json(); el('sys err','SYS', e.error || res.statusText); return; }
+
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    while(true){
+      const {value, done} = await reader.read();
+      if(done) break;
+      buf += dec.decode(value, {stream:true});
+      let idx;
+      while((idx = buf.indexOf('\n\n')) >= 0){
+        const line = buf.slice(0, idx).trim();
+        buf = buf.slice(idx + 2);
+        if(!line.startsWith('data:')) continue;
+        const ev = JSON.parse(line.slice(5));
+        if(ev.type === 'token'){
+          if(!aiDiv) aiDiv = el('ai','SENTRY','');
+          streamed += ev.text;
+          aiDiv.childNodes[1].textContent = streamed;
+          log.scrollTop = log.scrollHeight;
+        }else if(ev.type === 'tool'){
+          const c = el('sys','TOOL',''); c.innerHTML += `<span class="chip">${ev.text.replace(/</g,'&lt;')}</span>`;
+        }else if(ev.type === 'confirm'){
+          askConfirm(ev.message);
+        }else if(ev.type === 'final'){
+          if(!aiDiv){ aiDiv = el('ai','SENTRY', ev.text); if(/^TASK:/.test(ev.text)) aiDiv.classList.add('plan-block'); }
+          speak(ev.text);
+          renderPlan(ev.plan);
+        }else if(ev.type === 'error'){
+          el('sys err','ERR', ev.text);
+        }
+      }
+    }
+  }catch(e){
+    el('sys err','ERR','connection lost: ' + e.message);
+  }finally{
+    busy = false;
+    setPill('standby');
+    refreshState();
+  }
+}
+document.getElementById('send').onclick = ()=>send(inp.value.trim());
+inp.addEventListener('keydown', e=>{ if(e.key === 'Enter') send(inp.value.trim()); });
+
+/* ---------- mic in ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const micBtn = document.getElementById('mic');
+let rec = null, listening = false;
+if(SR){
+  rec = new SR(); rec.lang = 'en-IN'; rec.interimResults = true;
+  rec.onresult = e=>{
+    let final = '';
+    for(const r of e.results) if(r.isFinal) final += r[0].transcript;
+    if(final){ stopMic(); send(final.trim()); }
+  };
+  rec.onend = ()=>{ if(listening) stopMic(); };
+  rec.onerror = ()=>stopMic();
+}else{
+  micBtn.style.opacity = .3; micBtn.title = 'voice input needs Chrome/Edge';
+}
+function startMic(){ if(!rec) return; speechSynthesis.cancel(); listening = true;
+  micBtn.classList.add('on'); setPill('listening'); try{rec.start()}catch(_){} }
+function stopMic(){ listening = false; micBtn.classList.remove('on');
+  if(pill.textContent === 'listening') setPill('standby'); try{rec && rec.stop()}catch(_){} }
+micBtn.onclick = ()=>listening ? stopMic() : startMic();
+
+if('speechSynthesis' in window) speechSynthesis.getVoices();
+refreshState();
+inp.focus();
+</script>
+</body>
+</html>

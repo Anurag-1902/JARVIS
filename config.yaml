@@ -1,0 +1,20 @@
+llm:
+  provider: ollama          # ollama (local) | anthropic (cloud)
+  model: qwen2.5:7b         # you already have this pulled. Tight-but-OK on 8GB RAM;
+                            # if it feels sluggish: ollama pull qwen2.5:3b and switch.
+  ollama_url: http://localhost:11434
+
+voice:
+  stt_model: tiny.en        # fastest on 8GB; base.en for more accuracy
+  record_seconds: 6
+  tts: auto                 # kokoro if installed (JARVIS voice) -> mac `say` -> pyttsx3
+  kokoro_voice: bm_george   # calm British male; bm_lewis is the alternative
+  wake_words: [jarvis, sentry]   # fallback keywords for whisper wake
+  wake_threshold: 0.5            # openwakeword sensitivity (lower = more sensitive)
+
+agent:
+  workdir: "~"              # point at your project, e.g. "~/dev/levee"
+  allow_shell: true
+  shell_confirm: true       # always ask before running commands (keep this on)
+  max_tool_rounds: 6
+  persona: jarvis           # jarvis | plain

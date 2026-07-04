@@ -1,0 +1,8 @@
+# core (text mode)
+requests>=2.31
+pyyaml>=6.0
+flask>=3.0
+
+# voice mode (optional):
+# pip install faster-whisper sounddevice numpy
+# pip install pyttsx3   # only if not on macOS and not using piper
