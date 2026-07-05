@@ -8,7 +8,10 @@ DEFAULTS = {
         "model": "qwen2.5:7b",
         "ollama_url": "http://localhost:11434",
         "anthropic_model": "claude-sonnet-4-6",
-        "max_tokens": 1200,
+        "max_tokens": 1800,
+        "temperature": 0.3,
+        "keep_alive": "30m",
+        "num_ctx": 8192,
     },
     "voice": {
         "enabled": False,                 # start in text mode; --voice flag overrides

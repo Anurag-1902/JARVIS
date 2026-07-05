@@ -11,6 +11,13 @@ class OllamaProvider(LLMProvider):
         self.url = cfg["llm"]["ollama_url"].rstrip("/")
         self.model = cfg["llm"]["model"]
         self.max_tokens = cfg["llm"]["max_tokens"]
+        self.temperature = cfg["llm"].get("temperature", 0.3)
+        self.keep_alive = cfg["llm"].get("keep_alive", "30m")
+        self.num_ctx = cfg["llm"].get("num_ctx", 8192)
+
+    def _options(self):
+        return {"num_predict": self.max_tokens, "temperature": self.temperature,
+                "num_ctx": self.num_ctx}
 
     def preflight(self) -> str:
         """Verify Ollama is up and the configured model exists. Auto-selects the
@@ -51,7 +58,8 @@ class OllamaProvider(LLMProvider):
         payload = {
             "model": self.model,
             "stream": False,
-            "options": {"num_predict": self.max_tokens, "temperature": 0.4},
+            "keep_alive": self.keep_alive,
+            "options": self._options(),
             "messages": [{"role": "system", "content": system}] + messages,
         }
         try:
@@ -73,7 +81,8 @@ class OllamaProvider(LLMProvider):
         payload = {
             "model": self.model,
             "stream": True,
-            "options": {"num_predict": self.max_tokens, "temperature": 0.4},
+            "keep_alive": self.keep_alive,
+            "options": self._options(),
             "messages": [{"role": "system", "content": system}] + messages,
         }
         try:

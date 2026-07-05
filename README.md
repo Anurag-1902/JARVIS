@@ -137,7 +137,9 @@ frontier model — so the provider is pluggable.
 - **Multi-workspace** — `workspace: levee ~/dev/levee` switches projects with
   isolated plans, memory, and index
 - **Memory** — cross-session task outcomes ("last time this failed because…")
-  plus full SQLite chat history, searchable in chat and in the web UI
+  plus full SQLite chat history with keyword-scored search: stopwords stripped,
+  multi-term ranking, prefix tolerance ("crash" finds "crashing"), so
+  "what did we do about docker?" retrieves the actual past conversation
 - **RAG** — `index` builds a local vector index of the project (Ollama
   embeddings, TF-IDF fallback); `search_docs` answers from your own code
 - **Web research** — "best practices for X" triggers live search + fetch with
@@ -148,8 +150,10 @@ frontier model — so the provider is pluggable.
   cached 24h; set GITHUB_TOKEN for a 5000/hr API limit (60/hr without)
 - **Voice** — push-to-talk (`--voice`), hands-free wake word "hey jarvis"
   (`--wake`, openWakeWord), JARVIS-style British TTS (Kokoro bm_george)
-- **Web UI** — text-generation-webui-inspired dark interface: streaming chat,
-  Execute/Undo/Template buttons, workspace picker, history search, approval modal
+- **Web UI** — clean open-webui-inspired interface: centered chat thread, pill
+  composer with in-field send/stop, slide-in Controls drawer (per-step Run buttons,
+  Undo, Save template), workspace picker, history search, and a command-approval
+  modal. Two earlier skins ship as web/index-*-backup.html
 
 ## Quick start
 
@@ -205,6 +209,22 @@ sentry/
     ├── research.py
     └── repo.py
 ```
+
+## Performance tuning
+
+All generation knobs live in `config.yaml` under `llm:`
+
+| Setting | Default | Effect |
+|---|---|---|
+| `keep_alive: 30m` | 30m | Keeps the model loaded in RAM. Without it, Ollama unloads after ~5 min idle and the next reply pays a 10-30s reload. Set `-1` to pin it permanently. |
+| `max_tokens: 1800` | 1800 | Longer, more complete answers. Raise to 2500 for essays; lower to 800 for snappier short replies. |
+| `temperature: 0.3` | 0.3 | Lower = more precise and deterministic; higher = more creative. |
+| `num_ctx: 8192` | 8192 | Context window — big enough for repo digests + chat history. Lower to 4096 to save RAM. |
+
+Practical speed advice for 8 GB machines: `qwen2.5:3b` is roughly 2x faster than
+7b at some quality cost; close heavy apps (Chrome tabs) while generating; or run
+`--provider anthropic` for both the fastest and highest-quality responses with
+zero local RAM pressure.
 
 ## Honest limitations
 
