@@ -27,15 +27,40 @@ class ChatHistory:
                  user_input[:2000], output[:4000]))
             self.db.commit()
 
-    def search(self, query: str, k: int = 5) -> str:
-        """Case-insensitive substring search over both sides of the conversation."""
-        q = f"%{query.strip()}%"
+    STOP = {"what", "did", "we", "do", "about", "the", "a", "an", "to", "of",
+            "in", "on", "for", "and", "or", "is", "was", "it", "that", "this",
+            "how", "when", "where", "why", "have", "has", "had", "you", "i",
+            "me", "my", "our", "us", "with", "last", "time", "previously",
+            "earlier", "remember", "again", "were", "does", "can"}
+
+    @classmethod
+    def _terms(cls, query: str) -> list:
+        words = [w.strip(".,!?:;'\"()").lower() for w in query.split()]
+        return [w for w in words if len(w) > 2 and w not in cls.STOP][:8]
+
+    def _scored_rows(self, query: str, k: int):
+        """Keyword search: a row matches if it contains ANY term (prefix-tolerant,
+        so 'crash' matches 'crashing'). Ranked by #terms matched, then recency."""
+        terms = self._terms(query)
+        if not terms:
+            terms = [query.strip().lower()[:40]] if query.strip() else []
+        if not terms:
+            return []
         with self.lock:
             rows = self.db.execute(
-                """SELECT ts, project, kind, user_input, sentry_output FROM chats
-                   WHERE user_input LIKE ? COLLATE NOCASE
-                      OR sentry_output LIKE ? COLLATE NOCASE
-                   ORDER BY id DESC LIMIT ?""", (q, q, k)).fetchall()
+                "SELECT ts, project, kind, user_input, sentry_output FROM chats "
+                "ORDER BY id DESC LIMIT 800").fetchall()
+        scored = []
+        for idx, r in enumerate(rows):
+            text = (r[3] + " " + r[4]).lower()
+            score = sum(1 for t in terms if t in text)
+            if score:
+                scored.append((-score, idx, r))  # more terms first, then newest
+        scored.sort()
+        return [r for _, _, r in scored[:k]]
+
+    def search(self, query: str, k: int = 5) -> str:
+        rows = self._scored_rows(query, k)
         if not rows:
             return f"No past conversations matching '{query}'."
         out = []
@@ -43,17 +68,10 @@ class ChatHistory:
             out.append(f"[{ts} · {proj} · {kind}]\nYOU: {ui[:300]}\nSENTRY: {so[:500]}")
         return "\n---\n".join(out)
 
-    def search_rows(self, query: str, k: int = 20) -> list[dict]:
+    def search_rows(self, query: str, k: int = 20) -> list:
         """Structured results for the web UI."""
-        q = f"%{query.strip()}%"
-        with self.lock:
-            rows = self.db.execute(
-                """SELECT ts, project, kind, user_input, sentry_output FROM chats
-                   WHERE user_input LIKE ? COLLATE NOCASE
-                      OR sentry_output LIKE ? COLLATE NOCASE
-                   ORDER BY id DESC LIMIT ?""", (q, q, k)).fetchall()
         return [{"ts": r[0], "project": r[1], "kind": r[2],
-                 "you": r[3], "sentry": r[4]} for r in rows]
+                 "you": r[3], "sentry": r[4]} for r in self._scored_rows(query, k)]
 
     def count(self) -> int:
         with self.lock:
