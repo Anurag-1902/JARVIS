@@ -99,6 +99,11 @@ def undo():
     return jsonify({"message": agent.checkpoints.undo(), "plan": plan_state()})
 
 
+@app.route("/api/metrics")
+def metrics():
+    return jsonify(agent.metrics.as_dict() | {"text": agent.metrics.summary()})
+
+
 @app.route("/api/history")
 def history():
     q = request.args.get("q", "").strip()

@@ -19,6 +19,7 @@ from ..checkpoints import CheckpointManager
 from ..templates import TemplateManager
 from ..executor import StepExecutor
 from ..memory import Memory
+from ..metrics import Metrics
 from ..project import detect
 from ..rag import DocIndex
 from ..repo import RepoInspector, find_repo_url
@@ -108,8 +109,12 @@ class Agent:
         self._confirm = confirm_fn
         # global (cross-workspace) services
         self.ws = Workspaces(cfg["memory"]["dir"], cfg["agent"]["workdir"])
+        self.metrics = Metrics(cfg["memory"]["dir"])
+        def _emb(texts):
+            return self.llm.embed(texts)
         self.chat_history = ChatHistory(
-            __import__("os").path.join(cfg["memory"]["dir"], "chats.db"))
+            __import__("os").path.join(cfg["memory"]["dir"], "chats.db"),
+            embed_fn=_emb if hasattr(llm, "embed") else None)
         self.researcher = Researcher()
         self.repo_inspector = RepoInspector(cfg["memory"]["dir"])
         self.repo_context = ""  # digest of the most recently pasted GitHub repo
@@ -131,8 +136,10 @@ class Agent:
         self.tools = ToolBox(wcfg, self._confirm, doc_index=self.doc_index,
                              history=self.chat_history, researcher=self.researcher,
                              repo_inspector=self.repo_inspector)
-        self.tasks = TaskManager(wcfg["memory"]["dir"],
-                                 on_finish=self.memory.record)
+        def _finished(*a, **k):
+            self.metrics.bump("tasks_completed")
+            return self.memory.record(*a, **k)
+        self.tasks = TaskManager(wcfg["memory"]["dir"], on_finish=_finished)
         self.executor = StepExecutor(wcfg["agent"]["workdir"],
                                      self._confirm or (lambda m: True))
         self.checkpoints = CheckpointManager(wcfg["agent"]["workdir"],
@@ -154,7 +161,9 @@ class Agent:
     def _system(self) -> str:
         lessons = f"Lessons from past tasks: {self._lessons}\n" if self._lessons else ""
         persona = self.PERSONAS.get(self.cfg["agent"].get("persona", "jarvis"), "")
-        repo = f"\n{self.repo_context}\n" if self.repo_context else ""
+        # inject a trimmed digest: full version stays stored, but only ~3.5k chars
+        # go into the prompt — prompt prefill is the dominant latency on local models
+        repo = f"\n{self.repo_context[:3500]}\n" if self.repo_context else ""
         return SYSTEM_TMPL.format(
             tools=self.tools.spec(),
             project=f"[workspace: {self.ws.current}] " + self.project["summary"] + repo,
@@ -174,7 +183,11 @@ class Agent:
         return msg
 
     def handle(self, user_text: str, on_token=None) -> str:
+        import time as _t
+        _t0 = _t.time()
         reply = self._handle_inner(user_text, on_token)
+        self.metrics.bump("turns")
+        self.metrics.timing((_t.time() - _t0) * 1000)
         try:
             self.chat_history.record(user_text, reply, self.ws.current, self._last_kind)
         except Exception:
@@ -190,10 +203,13 @@ class Agent:
             return self.build_index()
         if cmd == "memory":
             return self.memory.stats()
+        if cmd in ("stats", "metrics"):
+            return self.metrics.summary()
         if cmd == "workspaces":
             return self.ws.list()
         if cmd in ("undo", "rollback", "revert"):
             self._last_kind = "tool"
+            self.metrics.bump("undos")
             return self.checkpoints.undo()
         if cmd == "templates":
             return self.templates.list()
@@ -215,6 +231,7 @@ class Agent:
                         .get("services", {}).keys())
             steps = self.templates.customize(tpl, self.ws.workdir(), svcs)
             self.templates.mark_used(mt.group(1))
+            self.metrics.bump("templates_used")
             self._last_kind = "plan"
             brief = self.tasks.start(tpl["goal"], steps)
             return (f"Loaded template '{mt.group(1)}' (customized for this project).\n"
@@ -267,6 +284,7 @@ class Agent:
                 return res["output"]
 
             if res["status"] == "ok":
+                self.metrics.bump("steps_executed")
                 self._last_plan = {"goal": t["goal"], "steps": t["steps"]}
                 cp_msg = self.checkpoints.create(t["goal"], i, step["detail"],
                                                  command=res["command"], pre=pre)
@@ -274,6 +292,7 @@ class Agent:
                 return (f"✔ Executed: {res['command']}\n"
                         f"{res['output'][:800]}\n({cp_msg})\n\n{advance_msg}")
 
+            self.metrics.bump("exec_failures") if res["status"] in ("fail","give_up") else None
             if res["status"] == "give_up":
                 return (f"✖ '{res['command']}' has now failed {res['fails']} times "
                         f"(exit {res['exit']}).\n{res['output'][:600]}\n\n"
@@ -292,6 +311,7 @@ class Agent:
             gh = find_repo_url(user_text)
             if gh:
                 self.log(f"[repo] inspecting {gh[0]}/{gh[1]}")
+                self.metrics.bump("repos_inspected")
                 try:
                     self.repo_context = self.repo_inspector.inspect(*gh)
                 except Exception as e:
@@ -318,11 +338,12 @@ class Agent:
             # auto-context: research-worthy questions get live web info injected
             elif should_research(user_text):
                 self.log("[auto] web research triggered")
+                self.metrics.bump("researches")
                 found = self.researcher.research(user_text)
                 self.history.append(
                     {"role": "user", "content": f"TOOL RESULT (research):\n{found}"})
 
-        self.history = self.history[-16:]  # bounded context for small models
+        self.history = self.history[-10:]  # tighter context = faster prefill
 
         for _ in range(self.cfg["agent"]["max_tool_rounds"]):
             rs = ReplyStream(on_token or (lambda t: None))
@@ -339,6 +360,7 @@ class Agent:
                 kind = obj.get("type")
                 if kind == "plan":
                     self._last_kind = "plan"
+                    self.metrics.bump("plans_created")
                     goal = obj.get("goal", "task")
                     steps = obj.get("steps", [])
                     if not steps:

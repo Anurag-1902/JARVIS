@@ -138,8 +138,10 @@ frontier model — so the provider is pluggable.
   isolated plans, memory, and index
 - **Memory** — cross-session task outcomes ("last time this failed because…")
   plus full SQLite chat history with keyword-scored search: stopwords stripped,
-  multi-term ranking, prefix tolerance ("crash" finds "crashing"), so
-  "what did we do about docker?" retrieves the actual past conversation
+  multi-term ranking, prefix tolerance ("crash" finds "crashing"), and optional
+  semantic search via Ollama embeddings — "containers" finds conversations that
+  only say "docker" (auto-enabled when nomic-embed-text is pulled; degrades
+  gracefully to keyword-only otherwise)
 - **RAG** — `index` builds a local vector index of the project (Ollama
   embeddings, TF-IDF fallback); `search_docs` answers from your own code
 - **Web research** — "best practices for X" triggers live search + fetch with
@@ -189,7 +191,7 @@ python webui.py --provider anthropic
 | `undo` | revert last executed step |
 | `save plan as <name>` / `use template <name>` / `templates` | template workflow |
 | `workspace: <name> [path]` / `workspaces` | project switching |
-| `index` / `memory` | build RAG index / memory stats |
+| `index` / `memory` / `stats` | RAG index / memory stats / usage metrics |
 | `what did we do about <x>?` | auto-searches chat history |
 | `best practices for <x>` | auto web research with citations |
 | paste a github.com URL | fetch + understand any public repo; then ask anything about it |
@@ -210,6 +212,13 @@ sentry/
     └── repo.py
 ```
 
+## Usage metrics
+
+`stats` in chat (or the Stats panel in the web UI) reports real usage: turns,
+average response time, plans created/completed, steps executed with success
+rate, undos, template reuse, repos inspected, and web researches — persisted
+across sessions in data/metrics.json.
+
 ## Performance tuning
 
 All generation knobs live in `config.yaml` under `llm:`
@@ -219,7 +228,10 @@ All generation knobs live in `config.yaml` under `llm:`
 | `keep_alive: 30m` | 30m | Keeps the model loaded in RAM. Without it, Ollama unloads after ~5 min idle and the next reply pays a 10-30s reload. Set `-1` to pin it permanently. |
 | `max_tokens: 1800` | 1800 | Longer, more complete answers. Raise to 2500 for essays; lower to 800 for snappier short replies. |
 | `temperature: 0.3` | 0.3 | Lower = more precise and deterministic; higher = more creative. |
-| `num_ctx: 8192` | 8192 | Context window — big enough for repo digests + chat history. Lower to 4096 to save RAM. |
+| `num_ctx: 4096` | 4096 | Context window. The 8 GB-RAM sweet spot — 8192 works but risks swap. |
+
+Prompt weight is auto-managed for speed: repo digests are trimmed to ~3.5k chars
+in the prompt and history to the last 10 turns, cutting prompt size ~40% when a GitHub repo is active.
 
 Practical speed advice for 8 GB machines: `qwen2.5:3b` is roughly 2x faster than
 7b at some quality cost; close heavy apps (Chrome tabs) while generating; or run
